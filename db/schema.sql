@@ -50,6 +50,17 @@ create index if not exists idx_campaign_rounds_campaign_id on campaign_rounds(ca
 create index if not exists idx_campaign_data_points_campaign_id on campaign_data_points(campaign_id);
 
 -- ---------------------------------------------------------------------------
+-- Table-level grants: allow anon (pre-login) and authenticated (post-login)
+-- roles to attempt queries at all. RLS policies below still independently
+-- filter which ROWS each request can see -- this just grants permission to
+-- query the table in the first place. Without this, Supabase returns
+-- "permission denied for table X" even though RLS is configured correctly.
+-- ---------------------------------------------------------------------------
+grant select, insert, update, delete on public.campaigns to anon, authenticated;
+grant select, insert, update, delete on public.campaign_rounds to anon, authenticated;
+grant select, insert, update, delete on public.campaign_data_points to anon, authenticated;
+
+-- ---------------------------------------------------------------------------
 -- Row Level Security: enable on every table
 -- ---------------------------------------------------------------------------
 alter table campaigns enable row level security;
