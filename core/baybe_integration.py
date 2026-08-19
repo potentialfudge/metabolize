@@ -156,6 +156,101 @@ def validate_uploaded_init(df: pd.DataFrame, config: Dict[str, Any]) -> List[str
 
 
 # --------------------------------------------------------------------------- #
+# Encoding for the GP surrogate (separate from BayBE's SearchSpace encodings --
+# this is a plain, consistent one-hot + passthrough scheme used only to fit
+# the raw BoTorch GP below, mirroring the approach already proven in the
+# benchmarking pipeline's schsf_meta_aug_runner.py)
+# --------------------------------------------------------------------------- #
+def _encode_matrix(df: pd.DataFrame, parameters: List[Dict[str, Any]]) -> np.ndarray:
+    """Encode a dataframe of raw parameter values into a numeric matrix.
+    Categorical -> one-hot against the parameter's DECLARED value list (not
+    just what's present in df), so history and candidate encodings always
+    line up column-for-column even if not every category appears yet."""
+    cols = []
+    for p in parameters:
+        if p["type"] == "categorical":
+            for v in p["values"]:
+                cols.append((df[p["name"]].astype(str) == str(v)).astype(float).to_numpy())
+        else:
+            cols.append(df[p["name"]].astype(float).to_numpy())
+    return np.column_stack(cols)
+
+
+# --------------------------------------------------------------------------- #
+# BoTorch surrogate (fit directly, bypassing BayBE's Campaign/Recommender --
+# this mirrors the proven pattern from schsf_meta_aug_runner.py so we get
+# real per-acquisition UCB/EI/PI scores to feed blend_scores())
+# --------------------------------------------------------------------------- #
+def _fit_gp(X_train: np.ndarray, y_train: np.ndarray):
+    import torch
+    import gpytorch
+    from gpytorch.priors import GammaPrior
+    from botorch.models import SingleTaskGP
+    from botorch.fit import fit_gpytorch_mll
+    from gpytorch.mlls import ExactMarginalLogLikelihood
+
+    dtype = torch.double
+    tx = torch.as_tensor(X_train, dtype=dtype)
+    ty = torch.as_tensor(y_train, dtype=dtype).unsqueeze(-1)
+    y_mean = ty.mean()
+    y_std = ty.std().clamp_min(1e-6)
+    ty_s = (ty - y_mean) / y_std
+
+    model = SingleTaskGP(
+        tx, ty_s,
+        covar_module=gpytorch.kernels.ScaleKernel(
+            gpytorch.kernels.MaternKernel(nu=2.5, lengthscale_prior=GammaPrior(3.0, 6.0))
+        ),
+    )
+    mll = ExactMarginalLogLikelihood(model.likelihood, model)
+    fit_gpytorch_mll(mll)
+    return model, float(y_mean), float(y_std)
+
+
+def _posterior_mu_sigma(model, y_mean: float, y_std: float, X_cand: np.ndarray):
+    import torch
+    tx = torch.as_tensor(X_cand, dtype=torch.double)
+    model.eval()
+    with torch.no_grad():
+        post = model.posterior(tx)
+        mu_s = post.mean.squeeze(-1)
+        sd_s = post.variance.clamp_min(1e-12).sqrt().squeeze(-1)
+    mu = (mu_s * y_std + y_mean).cpu().numpy()
+    sd = (sd_s * y_std).cpu().numpy()
+    return mu.astype(float), sd.astype(float)
+
+
+def _acquisition_values(mu: np.ndarray, sigma: np.ndarray, y_best: float, beta: float, xi: float):
+    """Analytic UCB, EI, PI -- same formulas as schsf_meta_aug_runner.py."""
+    from scipy.stats import norm
+    sigma = np.maximum(sigma, 1e-9)
+    ucb = mu + beta * sigma
+    imp = mu - y_best - xi
+    z = imp / sigma
+    ei = np.maximum(imp * norm.cdf(z) + sigma * norm.pdf(z), 0.0)
+    pi = norm.cdf(z)
+    return ucb, ei, pi
+
+
+def _sample_candidate_pool(config: Dict[str, Any], n: int, seed: int) -> pd.DataFrame:
+    """Reuse the Sobol sampling logic to generate a large candidate pool to
+    score and rank, rather than enumerating the full (possibly huge) space."""
+    pool_config = dict(config)
+    pool_config["init_size"] = n
+    return generate_sobol_init(pool_config, seed=seed)
+
+
+def _annealed_xi(round_num: int, total_rounds: int, xi_max: float, xi_min: float) -> float:
+    """Decay xi linearly from xi_max (round 0, favors more exploration in EI)
+    to xi_min (final round, favors pure exploitation) -- same schedule used in
+    the benchmarking pipeline's schsf_meta_aug_runner.py."""
+    if total_rounds <= 0:
+        return xi_min
+    frac = float(np.clip(round_num / total_rounds, 0.0, 1.0))
+    return xi_max * (1 - frac) + xi_min * frac
+
+
+# --------------------------------------------------------------------------- #
 # Next-batch recommendation, driven by the meta blender
 # --------------------------------------------------------------------------- #
 def recommend_next_batch(
@@ -163,23 +258,34 @@ def recommend_next_batch(
     history_df: pd.DataFrame,
     batch_size: int,
     total_batches: Optional[int] = None,
+    candidate_pool_size: int = 500,
+    candidate_seed: int = 0,
+    ei_xi_max: float = 0.01,
+    ei_xi_min: float = 0.001,
 ) -> Dict[str, Any]:
     """
-    Runs decide_blend() on the ingested history, scores a pool of candidates
-    from the search space using the returned weights, and returns the top
-    batch_size candidates plus the full decide_blend() output (for the stats
-    page).
+    Fits a GP surrogate on ingested history, computes UCB/EI/PI for a sampled
+    candidate pool, blends them using decide_blend()'s weights, and returns
+    the top batch_size candidates plus the full decide_blend() output (for
+    the stats page).
 
-    history_df must have one row per experiment with parameter columns plus
-    a column named config['target_name'].
+    history_df must have one row per experiment with parameter columns, a
+    'batch' column (round number), and a column named config['target_name'].
+
+    ei_xi_max / ei_xi_min: EI's exploration margin decays linearly from
+    ei_xi_max at round 0 to ei_xi_min at the final round (see _annealed_xi),
+    matching the schedule already validated in the benchmarking pipeline.
     """
-    from baybe.recommenders import RandomRecommender
-
+    params = config["parameters"]
     target_col = config["target_name"]
+
     blend_history = history_df.rename(columns={target_col: "yield"})
     if "batch" not in blend_history.columns:
         raise ValueError("history_df must include a 'batch' column (round number)")
 
+    current_round = int(blend_history["batch"].max()) + 1  # round we're generating
+
+    # ---- 1. meta blend decision (weights, beta) ----
     blend_out = decide_blend(
         blend_history,
         batch_col="batch",
@@ -187,19 +293,32 @@ def recommend_next_batch(
         total_batches=total_batches,
         config=BlendConfig(),
     )
+    weights = blend_out["weights"]
+    beta = blend_out["beta"]
 
-    search_space = build_search_space(config)
-    # Pull a larger candidate pool than we need, then rank with blend_scores.
-    pool_size = max(batch_size * 20, 200)
-    candidates = RandomRecommender().recommend(batch_size=pool_size, searchspace=search_space)
+    # ---- 2. fit GP on ingested history ----
+    X_train = _encode_matrix(history_df, params)
+    y_train = history_df[target_col].to_numpy(float)
+    model, y_mean, y_std = _fit_gp(X_train, y_train)
+    y_best = float(y_train.max())
 
-    # NOTE: scoring candidates with actual UCB/EI/PI acquisition values requires
-    # a fitted BayBE surrogate/campaign object bound to history_df. This wiring
-    # (fit surrogate on history_df -> get per-acquisition scores for candidates
-    # -> blend_scores()) is the next piece to fill in once a BayBE Campaign is
-    # constructed in the UI layer; recommend_next_batch currently returns the
-    # blend decision + a candidate pool so that wiring has a clear seam.
+    # ---- 3. sample + score a candidate pool ----
+    candidates = _sample_candidate_pool(config, candidate_pool_size, seed=candidate_seed)
+    X_cand = _encode_matrix(candidates, params)
+    mu, sigma = _posterior_mu_sigma(model, y_mean, y_std, X_cand)
+
+    xi = _annealed_xi(current_round, total_batches or 0, ei_xi_max, ei_xi_min)
+    ucb, ei, pi = _acquisition_values(mu, sigma, y_best, beta=beta, xi=xi)
+
+    # ---- 4. blend + select top batch_size ----
+    blended = blend_scores(ucb, ei, pi, weights)
+    top_idx = np.argsort(blended)[::-1][:batch_size]
+    chosen = candidates.iloc[top_idx].reset_index(drop=True)
+    chosen["predicted_mean"] = mu[top_idx]
+    chosen["predicted_std"] = sigma[top_idx]
+
     return {
         "blend": blend_out,
-        "candidates": candidates.reset_index(drop=True),
+        "recommendations": chosen,
+        "xi": xi,
     }
