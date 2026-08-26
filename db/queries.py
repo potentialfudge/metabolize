@@ -1,14 +1,17 @@
 """
 Database query functions.
 
-Every function here takes an already-authenticated Supabase `client` as its
-first argument (see db/client.py -> get_client()). Because RLS policies key
-off auth.uid(), which Postgres reads from the CLIENT'S OWN SESSION -- not from
-any value we pass in -- these functions never take a user_id parameter. As
-long as the client is signed in as the right user, Postgres already knows who
-"you" are, and every query below is automatically scoped to that user's own
-rows. There is no way for these functions to accidentally fetch someone
-else's data, because the database itself refuses to return it.
+Every function here takes an already-configured Supabase `client` (see
+db/client.py -> get_client(), which attaches the current user's Auth0
+token). RLS policies check auth.jwt() ->> 'sub' against each row's
+user_id, so as long as the client carries the right token, every query
+below is automatically scoped to that user's own rows -- there is no way
+for these functions to accidentally fetch someone else's data.
+
+create_campaign is the one function that needs user_id passed in explicitly
+(as st.user.sub), since -- unlike Supabase's own auth -- there's no
+server-side "get the current user" lookup available via the Auth0 token
+alone; the caller already has it from st.user.
 """
 
 from typing import Any, Dict, List, Optional
@@ -18,9 +21,8 @@ from supabase import Client
 # --------------------------------------------------------------------------- #
 # campaigns
 # --------------------------------------------------------------------------- #
-def create_campaign(client: Client, name: str, mode: str, config: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a new campaign owned by the currently signed-in user."""
-    user_id = client.auth.get_user().user.id
+def create_campaign(client: Client, user_id: str, name: str, mode: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new campaign. user_id should be st.user.sub."""
     result = client.table("campaigns").insert({
         "user_id": user_id,
         "name": name,
@@ -32,8 +34,8 @@ def create_campaign(client: Client, name: str, mode: str, config: Dict[str, Any]
 
 
 def get_my_campaigns(client: Client, status: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Return all campaigns belonging to the signed-in user (RLS-scoped).
-    Optionally filter by status ('setup' | 'active' | 'completed')."""
+    """Return all campaigns belonging to the signed-in user (RLS-scoped via
+    the Auth0 token attached to `client`). Optionally filter by status."""
     query = client.table("campaigns").select("*").order("updated_at", desc=True)
     if status is not None:
         query = query.eq("status", status)
@@ -42,7 +44,6 @@ def get_my_campaigns(client: Client, status: Optional[str] = None) -> List[Dict[
 
 
 def get_campaign(client: Client, campaign_id: str) -> Optional[Dict[str, Any]]:
-    """Return a single campaign by id, or None if it doesn't exist / isn't yours."""
     result = client.table("campaigns").select("*").eq("id", campaign_id).execute()
     return result.data[0] if result.data else None
 
@@ -61,7 +62,6 @@ def update_campaign_config(client: Client, campaign_id: str, config: Dict[str, A
 # campaign_rounds
 # --------------------------------------------------------------------------- #
 def create_round(client: Client, campaign_id: str, round_number: int) -> Dict[str, Any]:
-    """Create a new (not-yet-ingested) round row."""
     result = client.table("campaign_rounds").insert({
         "campaign_id": campaign_id,
         "round_number": round_number,
@@ -102,10 +102,6 @@ def mark_round_ingested(client: Client, campaign_id: str, round_number: int, ble
 def insert_data_points(
     client: Client, campaign_id: str, round_number: int, rows: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """
-    Insert a batch of experiment rows for a round. `rows` is a list of
-    {"param_values": {...}, "target_value": None-or-number} dicts.
-    """
     payload = [
         {
             "campaign_id": campaign_id,

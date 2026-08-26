@@ -1,5 +1,11 @@
 -- ============================================================================
 -- Meta Acquisition Blender App — Database Schema
+--
+-- Identity is provided by Auth0 (via Streamlit's st.login()), registered in
+-- Supabase as a Third-Party Auth issuer -- NOT Supabase's own auth.users.
+-- That's why user_id is `text` (Auth0's `sub` claim, e.g. "auth0|abc123" or
+-- "google-oauth2|456") with no foreign key to auth.users, and why RLS
+-- policies check auth.jwt() ->> 'sub' rather than auth.uid().
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
@@ -7,7 +13,7 @@
 -- ---------------------------------------------------------------------------
 create table if not exists campaigns (
     id uuid primary key default gen_random_uuid(),
-    user_id uuid not null references auth.users(id) on delete cascade,
+    user_id text not null,
     name text not null,
     mode text not null check (mode in ('simple', 'advanced')),
     status text not null default 'setup' check (status in ('setup', 'active', 'completed')),
@@ -53,8 +59,7 @@ create index if not exists idx_campaign_data_points_campaign_id on campaign_data
 -- Table-level grants: allow anon (pre-login) and authenticated (post-login)
 -- roles to attempt queries at all. RLS policies below still independently
 -- filter which ROWS each request can see -- this just grants permission to
--- query the table in the first place. Without this, Supabase returns
--- "permission denied for table X" even though RLS is configured correctly.
+-- query the table in the first place.
 -- ---------------------------------------------------------------------------
 grant select, insert, update, delete on public.campaigns to anon, authenticated;
 grant select, insert, update, delete on public.campaign_rounds to anon, authenticated;
@@ -68,24 +73,27 @@ alter table campaign_rounds enable row level security;
 alter table campaign_data_points enable row level security;
 
 -- ---------------------------------------------------------------------------
--- Policies: campaigns — user can only see/edit their own rows
+-- Policies: campaigns — user can only see/edit their own rows.
+-- auth.jwt() ->> 'sub' reads the `sub` claim from the verified Auth0 token
+-- (Supabase Third-Party Auth must have Auth0 registered as a trusted issuer
+-- for auth.jwt() to see these claims).
 -- ---------------------------------------------------------------------------
 create policy "select own campaigns"
     on campaigns for select
-    using (auth.uid() = user_id);
+    using ((auth.jwt() ->> 'sub') = user_id);
 
 create policy "insert own campaigns"
     on campaigns for insert
-    with check (auth.uid() = user_id);
+    with check ((auth.jwt() ->> 'sub') = user_id);
 
 create policy "update own campaigns"
     on campaigns for update
-    using (auth.uid() = user_id)
-    with check (auth.uid() = user_id);
+    using ((auth.jwt() ->> 'sub') = user_id)
+    with check ((auth.jwt() ->> 'sub') = user_id);
 
 create policy "delete own campaigns"
     on campaigns for delete
-    using (auth.uid() = user_id);
+    using ((auth.jwt() ->> 'sub') = user_id);
 
 -- ---------------------------------------------------------------------------
 -- Policies: campaign_rounds — access via ownership of the parent campaign
@@ -96,7 +104,7 @@ create policy "select own campaign rounds"
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_rounds.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     );
 
@@ -106,7 +114,7 @@ create policy "insert own campaign rounds"
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_rounds.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     );
 
@@ -116,14 +124,14 @@ create policy "update own campaign rounds"
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_rounds.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     )
     with check (
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_rounds.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     );
 
@@ -136,7 +144,7 @@ create policy "select own data points"
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_data_points.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     );
 
@@ -146,7 +154,7 @@ create policy "insert own data points"
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_data_points.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     );
 
@@ -156,14 +164,14 @@ create policy "update own data points"
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_data_points.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     )
     with check (
         exists (
             select 1 from campaigns
             where campaigns.id = campaign_data_points.campaign_id
-            and campaigns.user_id = auth.uid()
+            and campaigns.user_id = (auth.jwt() ->> 'sub')
         )
     );
 
