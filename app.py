@@ -1,4 +1,5 @@
 import streamlit as st
+from ui.campaign_picker import campaign_picker
 
 st.set_page_config(page_title="metabolize", page_icon="🧪")
 
@@ -21,8 +22,10 @@ from db.queries import create_campaign, get_my_campaigns
 
 client = get_client()
 
-if st.button("Create test campaign"):
-    create_campaign(client, st.user.sub, "Test campaign", "simple", {})
-    st.rerun()
-
-st.write("Logged in. Campaign picker goes here next.")
+if "active_campaign_id" not in st.session_state:
+    campaign_picker()
+else:
+    st.write(f"Campaign {st.session_state['active_campaign_id']} — screen not built yet.")
+    if st.button("Back to campaigns"):
+        del st.session_state["active_campaign_id"]
+        st.rerun()

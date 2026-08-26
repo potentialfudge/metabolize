@@ -58,6 +58,12 @@ def update_campaign_config(client: Client, campaign_id: str, config: Dict[str, A
     return result.data[0]
 
 
+def delete_campaign(client: Client, campaign_id: str) -> None:
+    """Delete a campaign and all its rounds/data points (cascades via the
+    ON DELETE CASCADE foreign keys already defined in schema.sql)."""
+    client.table("campaigns").delete().eq("id", campaign_id).execute()
+
+
 # --------------------------------------------------------------------------- #
 # campaign_rounds
 # --------------------------------------------------------------------------- #
