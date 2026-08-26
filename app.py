@@ -1,5 +1,4 @@
 import streamlit as st
-from ui.campaign_picker import campaign_picker
 
 st.set_page_config(page_title="metabolize", page_icon="🧪")
 
@@ -18,14 +17,20 @@ if st.sidebar.button("Log out"):
 # Supabase request. This is where routing to campaign_picker / setup /
 # round_flow will go next.
 from db.client import get_client
-from db.queries import create_campaign, get_my_campaigns
-
-client = get_client()
+from db.queries import get_campaign
+from ui.campaign_picker import campaign_picker
+from ui.setup_simple import setup_simple
 
 if "active_campaign_id" not in st.session_state:
     campaign_picker()
 else:
-    st.write(f"Campaign {st.session_state['active_campaign_id']} — screen not built yet.")
-    if st.button("Back to campaigns"):
-        del st.session_state["active_campaign_id"]
-        st.rerun()
+    client = get_client()
+    campaign = get_campaign(client, st.session_state["active_campaign_id"])
+    view = st.session_state.get("active_campaign_view")
+    if view == "setup":
+        setup_simple(campaign)
+    else:
+        st.write(f"View '{view}' not built yet.")
+        if st.button("Back to campaigns"):
+            del st.session_state["active_campaign_id"]
+            st.rerun()

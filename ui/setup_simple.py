@@ -1,0 +1,172 @@
+"""
+Simple-mode campaign setup form.
+
+Shown for a campaign with status='setup'. Collects batch size, number of
+rounds, init settings, target name, and a dynamically-built parameter list,
+then saves it all into campaigns.config, flips status to 'active', and
+routes into the round flow (which handles actually generating the init set).
+
+Encoding is NOT exposed here (that's advanced-mode only) -- categorical
+parameters are always one-hot encoded in simple mode, continuous parameters
+need no encoding. This matches core/baybe_integration.py's _auto_encoding().
+"""
+
+import streamlit as st
+
+from db.client import get_client
+from db.queries import update_campaign_config, update_campaign_status
+
+
+def _default_param() -> dict:
+    return {"name": "", "type": "categorical", "values_text": "", "min": 0.0, "max": 1.0,
+            "use_interval": False, "interval": 1.0}
+
+
+def _params_key(campaign_id: str) -> str:
+    return f"_setup_params_{campaign_id}"
+
+
+def _build_config(campaign_id: str, batch_size, n_rounds, init_size, init_type, target_name) -> dict | None:
+    """Validate and convert the in-progress form state into the
+    config['parameters'] shape core/baybe_integration.py expects. Returns
+    None (and shows errors) if anything is invalid."""
+    raw_params = st.session_state[_params_key(campaign_id)]
+    if not raw_params:
+        st.error("Add at least one parameter.")
+        return None
+    if not target_name.strip():
+        st.error("Enter a target name.")
+        return None
+
+    seen_names = set()
+    parameters = []
+    for i, p in enumerate(raw_params):
+        name = p["name"].strip()
+        if not name:
+            st.error(f"Parameter {i + 1}: name is required.")
+            return None
+        if name in seen_names:
+            st.error(f"Parameter name '{name}' is used more than once.")
+            return None
+        seen_names.add(name)
+
+        if p["type"] == "categorical":
+            values = [v.strip() for v in p["values_text"].split(",") if v.strip()]
+            if len(values) < 2:
+                st.error(f"Parameter '{name}': enter at least 2 comma-separated values.")
+                return None
+            parameters.append({"name": name, "type": "categorical", "values": values, "encoding": "OHE"})
+        else:
+            if p["min"] >= p["max"]:
+                st.error(f"Parameter '{name}': min must be less than max.")
+                return None
+            entry = {"name": name, "type": "continuous", "min": float(p["min"]), "max": float(p["max"])}
+            if p["use_interval"]:
+                if p["interval"] <= 0:
+                    st.error(f"Parameter '{name}': interval must be > 0.")
+                    return None
+                entry["interval"] = float(p["interval"])
+            parameters.append(entry)
+
+    return {
+        "parameters": parameters,
+        "target_name": target_name.strip(),
+        "batch_size": int(batch_size),
+        "n_rounds": int(n_rounds),
+        "init_type": init_type,
+        "init_size": int(init_size),
+    }
+
+
+def setup_simple(campaign: dict) -> None:
+    campaign_id = campaign["id"]
+    st.title(campaign["name"])
+    st.caption("Simple mode — set up your campaign below.")
+
+    if _params_key(campaign_id) not in st.session_state:
+        st.session_state[_params_key(campaign_id)] = [_default_param()]
+
+    # ---- batch / round settings ----
+    st.subheader("Campaign settings")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        batch_size = st.number_input("Batch size (per round)", min_value=1, value=6, step=1)
+    with col2:
+        n_rounds = st.number_input("Number of rounds (excluding init)", min_value=1, value=10, step=1)
+    with col3:
+        init_size = st.number_input("Init batch size", min_value=1, value=8, step=1)
+
+    init_type = st.radio("Initial batch", ["Sobol (generate for me)", "Upload my own (CSV)"], horizontal=True)
+    init_type = "sobol" if init_type.startswith("Sobol") else "upload"
+
+    target_name = st.text_input("Target name", placeholder="e.g. yield")
+
+    st.divider()
+
+    # ---- parameters ----
+    st.subheader("Parameters")
+    params = st.session_state[_params_key(campaign_id)]
+
+    for i, p in enumerate(params):
+        with st.container(border=True):
+            top1, top2, top3 = st.columns([3, 2, 1])
+            with top1:
+                p["name"] = st.text_input("Parameter name", value=p["name"], key=f"name_{campaign_id}_{i}",
+                                           placeholder="e.g. ligand")
+            with top2:
+                p["type"] = st.selectbox("Type", ["categorical", "continuous"],
+                                          index=0 if p["type"] == "categorical" else 1,
+                                          key=f"type_{campaign_id}_{i}")
+            with top3:
+                st.write("")
+                st.write("")
+                if len(params) > 1 and st.button("Remove", key=f"remove_{campaign_id}_{i}"):
+                    params.pop(i)
+                    st.rerun()
+
+            if p["type"] == "categorical":
+                p["values_text"] = st.text_input(
+                    "Possible values (comma-separated)",
+                    value=p["values_text"],
+                    key=f"values_{campaign_id}_{i}",
+                    placeholder="e.g. XPhos, SPhos, dppf",
+                )
+                st.caption("Encoded automatically as one-hot (OHE).")
+            else:
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    p["min"] = st.number_input("Min", value=p["min"], key=f"min_{campaign_id}_{i}")
+                with c2:
+                    p["max"] = st.number_input("Max", value=p["max"], key=f"max_{campaign_id}_{i}")
+                with c3:
+                    p["use_interval"] = st.checkbox(
+                        "Discrete steps", value=p["use_interval"], key=f"useint_{campaign_id}_{i}",
+                        help="Check this if only specific numbers within the range are valid "
+                             "(e.g. 1, 2, 3). Leave unchecked for any decimal value in the range.",
+                    )
+                if p["use_interval"]:
+                    p["interval"] = st.number_input(
+                        "Interval", value=p["interval"], min_value=0.0001, key=f"interval_{campaign_id}_{i}",
+                        help="e.g. min=1, max=3, interval=1 gives allowed values 1, 2, 3.",
+                    )
+
+    if st.button("+ Add parameter"):
+        params.append(_default_param())
+        st.rerun()
+
+    st.divider()
+
+    if st.button("Save and start campaign", type="primary"):
+        config = _build_config(campaign_id, batch_size, n_rounds, init_size, init_type, target_name)
+        if config is not None:
+            client = get_client()
+            update_campaign_config(client, campaign_id, config)
+            update_campaign_status(client, campaign_id, "active")
+            st.session_state.pop(_params_key(campaign_id), None)
+            st.session_state["active_campaign_view"] = "round_flow"
+            st.rerun()
+
+    if st.button("← Back to campaigns"):
+        st.session_state.pop(_params_key(campaign_id), None)
+        st.session_state.pop("active_campaign_id", None)
+        st.rerun()
