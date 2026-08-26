@@ -32,6 +32,6 @@ def get_client() -> Client:
     if st.user.is_logged_in:
         # Attaches the Auth0 JWT so Postgres can verify it and RLS policies
         # checking auth.jwt() ->> 'sub' see the right user.
-        client.postgrest.auth(st.user.id_token)
+        client.postgrest.auth(st.user.tokens["id"])
 
     return client

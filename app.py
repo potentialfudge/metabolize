@@ -16,4 +16,13 @@ if st.sidebar.button("Log out"):
 # db.client.get_client() automatically attaches st.user.id_token to every
 # Supabase request. This is where routing to campaign_picker / setup /
 # round_flow will go next.
+from db.client import get_client
+from db.queries import create_campaign, get_my_campaigns
+
+client = get_client()
+
+if st.button("Create test campaign"):
+    create_campaign(client, st.user.sub, "Test campaign", "simple", {})
+    st.rerun()
+
 st.write("Logged in. Campaign picker goes here next.")
