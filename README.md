@@ -48,7 +48,7 @@ policies.
   continuous, SMILES auto-detected for chemical structure strings).
 - **Advanced mode**: everything in simple mode, plus explicit per-parameter
   encoding control (one-hot vs. SMILES/Morgan fingerprint), and a
-  **downloadable standalone runner script** — a self-contained Python script
+  **downloadable standalone runner script**: a self-contained Python script
   (no web app, no login) that runs the same campaign loop
   entirely in your own terminal/IDE, saving results and statistics to local
   folders as you go.
@@ -64,7 +64,7 @@ policies.
 | Database | Supabase (Postgres), storage-only - Auth0 tokens verified via Supabase's Third-Party Auth |
 | Privacy | Postgres Row Level Security, keyed on the Auth0 JWT's `sub` claim |
 | Optimization | [BayBE](https://github.com/emdgroup/baybe) for search-space definition; a raw BoTorch `SingleTaskGP` fit directly for the acquisition surrogate |
-| Meta blender | `core/meta_blender.py` — self-contained, no external dependencies beyond numpy/pandas |
+| Meta blender | `core/meta_blender.py` - self-contained, no external dependencies beyond numpy/pandas |
 
 Identity (Auth0) and storage (Supabase) are separate systems:
 Auth0 handles who you are, Supabase enforces what you can see, connected via
@@ -109,10 +109,10 @@ The **standalone runner script** can run locally, and it is available
 in advanced mode. From a campaign's advanced-mode setup page, download a
 self-contained Python script for that specific campaign, with exact instructions on how
 to run it. It runs the same optimization loop (Sobol init, GP-fit
-meta blender recommendations, round-by-round) fully offline in
+meta blender recommendations, per-round) fully offline in
 your own terminal or IDE, pausing each round for you to enter your
-experimental results, and saving results and statistics (learning curves,
-distributions, per-parameter analysis) to local CSVs and PNGs as it goes.
+experimental results, and then saving results and statistics (learning curves,
+distributions, per-parameter analysis) to local folders as it goes.
 
 ```bash
 pip install baybe torch gpytorch botorch scipy pandas numpy matplotlib
@@ -120,7 +120,7 @@ python your_campaign_runner.py
 ```
 
 (place the downloaded script alongside a `core/` folder containing
-`baybe_integration.py`, `meta_acquisition_blender_evalue_f.py`, and
+`baybe_integration.py`, `meta_blender.py`, and
 `acquisition_switcher.py`)
 
 ---
@@ -146,8 +146,8 @@ score(x) = a_UCB · UCB(x) + a_EI · EI(x) + a_PI · PI(x)      a ≥ 0, Σa = 1
 where the explore/exploit weight driving `a` is computed from campaign
 signals (roughness, uncertainty, stall, dispersion, improvement), and the
 influence of each signal is Bayesian-shrunk between a principled prior and
-what the campaign's own data supports — so the method is reliable from the
-very first batch (cold start = prior) and sharpens as evidence accumulates,
+what the campaign's own data supports, so the method is reliable from the
+first batch (cold start = prior) and sharpens as evidence accumulates,
 without ever training on data outside the current campaign.
 
 It also includes a secondary, read-only anytime-valid e-value stopping
