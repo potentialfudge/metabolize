@@ -1,4 +1,5 @@
 import streamlit as st
+import base64
 
 from db.client import get_client
 from db.queries import get_campaign
@@ -11,9 +12,31 @@ from ui.stats import stats_page
 st.set_page_config(page_title="metabolize", page_icon="🧪")
 
 if not st.user.is_logged_in:
-    st.title("metabolize")
-    st.caption("Sign in to start or resume a campaign.")
-    st.button("Log in", on_click=st.login, args=("auth0",))
+    st.markdown(
+    """
+    <style>
+    div[data-testid="stImage"] {
+        display: flex;
+        justify-content: center;
+        margin-bottom: -30px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+    )
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        icol1, icol2, icol3 = st.columns([1, 1, 1])
+        with icol2:
+            st.image("assets/logo.png", width=80)
+        st.markdown(
+            "<h1 style='text-align: center;'>metabolize</h1>"
+            "<p style='text-align: center; color: gray;'>Sign in to start or resume a campaign.</p>",
+            unsafe_allow_html=True,
+        )
+    
+        st.button("Log in", on_click=st.login, args=("auth0",), width="stretch", type="primary")
     st.stop()
 
 st.sidebar.write(f"Logged in as **{st.user.email}**")
