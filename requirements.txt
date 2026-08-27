@@ -1,4 +1,5 @@
 streamlit>=1.53
+authlib
 supabase
 pandas
 numpy
@@ -9,3 +10,4 @@ gpytorch
 botorch
 matplotlib
 toml
+rdkit

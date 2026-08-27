@@ -161,16 +161,82 @@ def validate_uploaded_init(df: pd.DataFrame, config: Dict[str, Any]) -> List[str
 # the raw BoTorch GP below, mirroring the approach already proven in the
 # benchmarking pipeline's schsf_meta_aug_runner.py)
 # --------------------------------------------------------------------------- #
+_SMILES_N_BITS = 256
+_fingerprint_cache: Dict[str, np.ndarray] = {}
+
+
+def _smiles_fingerprint(smiles: str, n_bits: int = _SMILES_N_BITS) -> np.ndarray:
+    """Morgan fingerprint bit vector for a SMILES string, cached since the
+    same declared category values get re-encoded every call. Returns a
+    zero vector for invalid SMILES rather than raising, so one bad value
+    doesn't take down the whole encoding step."""
+    if smiles in _fingerprint_cache:
+        return _fingerprint_cache[smiles]
+    from rdkit import Chem
+    from rdkit.Chem import rdFingerprintGenerator
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        vec = np.zeros(n_bits, dtype=float)
+    else:
+        generator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=n_bits)
+        fp = generator.GetFingerprint(mol)
+        vec = np.array(fp, dtype=float)
+    _fingerprint_cache[smiles] = vec
+    return vec
+
+
+def _rdkit_available() -> bool:
+    try:
+        import rdkit  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _encode_matrix(df: pd.DataFrame, parameters: List[Dict[str, Any]]) -> np.ndarray:
-    """Encode a dataframe of raw parameter values into a numeric matrix.
-    Categorical -> one-hot against the parameter's DECLARED value list (not
-    just what's present in df), so history and candidate encodings always
-    line up column-for-column even if not every category appears yet."""
+    """Encode a dataframe of raw parameter values into a numeric matrix for
+    the GP surrogate.
+
+    Categorical, encoding='smiles': Morgan fingerprint bits (real structural
+    encoding, not just a category label) -- computed per declared value so
+    history and candidates line up consistently even if not every category
+    has appeared yet. Falls back to one-hot with a warning if rdkit isn't
+    installed in this environment (e.g. a standalone runner script run
+    somewhere rdkit wasn't installed).
+
+    Categorical, other/unset: one-hot against the parameter's DECLARED value
+    list (not just what's present in df).
+
+    Continuous: passed through as-is.
+    """
     cols = []
     for p in parameters:
         if p["type"] == "categorical":
-            for v in p["values"]:
-                cols.append((df[p["name"]].astype(str) == str(v)).astype(float).to_numpy())
+            encoding = str(p.get("encoding", "OHE")).lower()
+            if encoding == "smiles":
+                if not _rdkit_available():
+                    import warnings
+                    warnings.warn(
+                        f"Parameter '{p['name']}' is set to SMILES encoding, but rdkit isn't "
+                        f"installed in this environment -- falling back to one-hot encoding "
+                        f"for the surrogate fit. Install rdkit to use real structural encoding."
+                    )
+                    for v in p["values"]:
+                        cols.append((df[p["name"]].astype(str) == str(v)).astype(float).to_numpy())
+                else:
+                    # Precompute each declared value's fingerprint once, then
+                    # look up per-row -- consistent columns regardless of
+                    # which values actually appear in this particular df.
+                    fps = {v: _smiles_fingerprint(str(v)) for v in p["values"]}
+                    row_fps = df[p["name"]].astype(str).map(
+                        lambda v: fps.get(v, np.zeros(_SMILES_N_BITS))
+                    )
+                    fp_matrix = np.vstack(row_fps.to_numpy())
+                    for bit in range(fp_matrix.shape[1]):
+                        cols.append(fp_matrix[:, bit])
+            else:
+                for v in p["values"]:
+                    cols.append((df[p["name"]].astype(str) == str(v)).astype(float).to_numpy())
         else:
             cols.append(df[p["name"]].astype(float).to_numpy())
     return np.column_stack(cols)
