@@ -37,7 +37,7 @@ def _init_step(client, campaign: dict) -> None:
     st.subheader("Initial batch")
 
     if config["init_type"] == "sobol":
-        seed = st.number_input("Sobol seed", min_value=0, value=42, step=1)
+        seed = st.number_input("Sobol seed", min_value=0, value=67, step=1)
         if st.button("Generate initial batch", type="primary"):
             df = generate_sobol_init(config, seed=int(seed))
             rows = [{"param_values": row.to_dict(), "target_value": None} for _, row in df.iterrows()]

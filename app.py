@@ -1,5 +1,13 @@
 import streamlit as st
 
+from db.client import get_client
+from db.queries import get_campaign
+from ui.campaign_picker import campaign_picker
+from ui.setup_simple import setup_simple
+from ui.setup_advanced import setup_advanced
+from ui.round_flow import round_flow
+from ui.stats import stats_page
+
 st.set_page_config(page_title="metabolize", page_icon="🧪")
 
 if not st.user.is_logged_in:
@@ -12,35 +20,43 @@ st.sidebar.write(f"Logged in as **{st.user.email}**")
 if st.sidebar.button("Log out"):
     st.logout()
 
-# From here on: st.user.sub / st.user.email are available, and
-# db.client.get_client() automatically attaches st.user.id_token to every
-# Supabase request. This is where routing to campaign_picker / setup /
-# round_flow will go next.
-from db.client import get_client
-from db.queries import get_campaign
-from ui.campaign_picker import campaign_picker
-from ui.setup_simple import setup_simple
-from ui.setup_advanced import setup_advanced
-from ui.round_flow import round_flow
-from ui.stats import stats_page
-
-if "active_campaign_id" not in st.session_state:
-    campaign_picker()
-else:
-    client = get_client()
-    campaign = get_campaign(client, st.session_state["active_campaign_id"])
-    view = st.session_state.get("active_campaign_view")
-    if view == "setup":
-        if campaign["mode"] == "advanced":
-            setup_advanced(campaign)
-        else:
-            setup_simple(campaign)
-    elif view == "round_flow":
-        round_flow(campaign)
-    elif view == "stats":
-        stats_page(campaign)
+# ---- routing ----
+try:
+    if "active_campaign_id" not in st.session_state:
+        campaign_picker()
     else:
-        st.write(f"View '{view}' not built yet.")
-        if st.button("Back to campaigns"):
-            del st.session_state["active_campaign_id"]
+        client = get_client()
+        campaign = get_campaign(client, st.session_state["active_campaign_id"])
+        view = st.session_state.get("active_campaign_view")
+
+        if campaign is None:
+            # campaign was deleted or doesn't belong to this user -- bounce back
+            st.session_state.pop("active_campaign_id", None)
+            st.session_state.pop("active_campaign_view", None)
             st.rerun()
+        elif view == "setup":
+            if campaign["mode"] == "advanced":
+                setup_advanced(campaign)
+            else:
+                setup_simple(campaign)
+        elif view == "round_flow":
+            round_flow(campaign)
+        elif view == "stats":
+            stats_page(campaign)
+        else:
+            st.write(f"Unknown view '{view}'.")
+            if st.button("← Back to campaigns"):
+                st.session_state.pop("active_campaign_id", None)
+                st.rerun()
+
+except Exception as e:
+    # Auth0 sessions expire after a while (commonly ~1 hour). Without this,
+    # an expired token surfaces as a raw "JWT expired" traceback from
+    # Supabase -- confusing for a non-coder user. Catch it here and offer a
+    # one-click way back in instead. Anything else genuinely unexpected
+    # still shows the real error, so real bugs aren't hidden.
+    if "JWT expired" in str(e) or "PGRST303" in str(e):
+        st.warning("Your session has expired. Please log in again to continue.")
+        st.button("Log in again", on_click=st.login, args=("auth0",))
+    else:
+        raise
