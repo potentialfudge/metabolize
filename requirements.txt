@@ -1,0 +1,11 @@
+streamlit>=1.53
+supabase
+pandas
+numpy
+scipy
+baybe
+torch
+gpytorch
+botorch
+matplotlib
+toml
