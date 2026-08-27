@@ -83,13 +83,53 @@ def _build_config(campaign_id: str, batch_size, n_rounds, init_size, init_type, 
     }
 
 
+def _build_partial_config(campaign_id: str, batch_size, n_rounds, init_size, init_type, target_name) -> dict:
+    """Like _build_config, but silent (no st.error calls) and lenient --
+    used to save in-progress setup when the user navigates away before
+    finishing, so returning later doesn't lose their work. Skips parameters
+    that aren't filled in enough to be meaningful yet, rather than blocking
+    the save entirely over one incomplete row."""
+    raw_params = st.session_state[_params_key(campaign_id)]
+    parameters = []
+    seen_names = set()
+    for p in raw_params:
+        name = p["name"].strip()
+        if not name or name in seen_names:
+            continue
+        seen_names.add(name)
+        if p["type"] == "categorical":
+            values = [v.strip() for v in p["values_text"].split(",") if v.strip()]
+            if len(values) < 2:
+                continue
+            parameters.append({
+                "name": name, "type": "categorical", "values": values,
+                "encoding": p.get("encoding", "OHE"),
+            })
+        else:
+            if p["min"] >= p["max"]:
+                continue
+            entry = {"name": name, "type": "continuous", "min": float(p["min"]), "max": float(p["max"])}
+            if p["use_interval"] and p["interval"] > 0:
+                entry["interval"] = float(p["interval"])
+            parameters.append(entry)
+
+    return {
+        "parameters": parameters,
+        "target_name": target_name.strip(),
+        "batch_size": int(batch_size),
+        "n_rounds": int(n_rounds),
+        "init_type": init_type,
+        "init_size": int(init_size),
+    }
+
+
 def _standalone_script_section(campaign: dict, batch_size, n_rounds, init_size, init_type, target_name) -> None:
     campaign_id = campaign["id"]
     with st.expander("Download a standalone script to run this campaign locally"):
         st.caption(
-            "A Python script you can run on your own IDE, no login required. "
+            "A Python script you can run on your own IDE. "
             "It generates each round's recommendations, saves them to a CSV, and pauses for you to "
-            "fill in your own results. "
+            "fill in your results. "
             "You will need core/baybe_integration.py and its dependencies alongside it."
         )
         config = _build_config(campaign_id, batch_size, n_rounds, init_size, init_type, target_name)
@@ -109,26 +149,58 @@ def _standalone_script_section(campaign: dict, batch_size, n_rounds, init_size, 
 def _render_setup_form(campaign: dict, advanced: bool) -> None:
     campaign_id = campaign["id"]
     st.title(campaign["name"])
-    st.caption("Advanced mode — full control over encodings." if advanced else
-               "Simple mode — set up your campaign below.")
+    st.caption("Advanced mode: full control over encodings." if advanced else
+               "Simple mode: set up your campaign below.")
+
+    saved_config = campaign.get("config") or {}
 
     if _params_key(campaign_id) not in st.session_state:
-        st.session_state[_params_key(campaign_id)] = [_default_param()]
+        saved_params = saved_config.get("parameters")
+        if saved_params:
+            # Reconstruct the form's working representation from a
+            # previously-saved (possibly partial) config, so returning to
+            # this page after a real session loss doesn't lose progress.
+            restored = []
+            for p in saved_params:
+                if p["type"] == "categorical":
+                    restored.append({
+                        "name": p["name"], "type": "categorical",
+                        "values_text": ", ".join(p.get("values", [])),
+                        "min": 0.0, "max": 1.0, "use_interval": False, "interval": 1.0,
+                        "encoding": p.get("encoding", "OHE"),
+                    })
+                else:
+                    restored.append({
+                        "name": p["name"], "type": "continuous",
+                        "values_text": "",
+                        "min": p.get("min", 0.0), "max": p.get("max", 1.0),
+                        "use_interval": "interval" in p, "interval": p.get("interval", 1.0),
+                        "encoding": "OHE",
+                    })
+            st.session_state[_params_key(campaign_id)] = restored
+        else:
+            st.session_state[_params_key(campaign_id)] = [_default_param()]
 
     # ---- batch / round settings ----
     st.subheader("Campaign settings")
     col1, col2, col3 = st.columns(3)
     with col1:
-        batch_size = st.number_input("Batch size (per round)", min_value=1, value=6, step=1)
+        batch_size = st.number_input("Batch size (per round)", min_value=1,
+                                      value=saved_config.get("batch_size", 6), step=1)
     with col2:
-        n_rounds = st.number_input("Number of rounds (excluding init)", min_value=1, value=10, step=1)
+        n_rounds = st.number_input("Number of rounds (excluding init)", min_value=1,
+                                    value=saved_config.get("n_rounds", 10), step=1)
     with col3:
-        init_size = st.number_input("Init batch size", min_value=1, value=8, step=1)
+        init_size = st.number_input("Init batch size", min_value=1,
+                                     value=saved_config.get("init_size", 8), step=1)
 
-    init_type = st.radio("Initial batch", ["Sobol (generate for me)", "Upload my own (CSV)"], horizontal=True)
+    init_options = ["Sobol (generate for me)", "Upload my own (CSV)"]
+    init_default_idx = 1 if saved_config.get("init_type") == "upload" else 0
+    init_type = st.radio("Initial batch", init_options, index=init_default_idx, horizontal=True)
     init_type = "sobol" if init_type.startswith("Sobol") else "upload"
 
-    target_name = st.text_input("Target name", placeholder="e.g. yield")
+    target_name = st.text_input("Target name", value=saved_config.get("target_name", ""),
+                                 placeholder="e.g. yield")
 
     st.divider()
 
@@ -212,7 +284,10 @@ def _render_setup_form(campaign: dict, advanced: bool) -> None:
             st.session_state["active_campaign_view"] = "round_flow"
             st.rerun()
 
-    if st.button("← Back to campaigns"):
+    if st.button("← Save and back to campaigns"):
+        partial_config = _build_partial_config(campaign_id, batch_size, n_rounds, init_size, init_type, target_name)
+        client = get_client()
+        update_campaign_config(client, campaign_id, partial_config)
         st.session_state.pop(_params_key(campaign_id), None)
         st.session_state.pop("active_campaign_id", None)
         st.rerun()
