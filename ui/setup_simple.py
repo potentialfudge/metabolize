@@ -87,9 +87,9 @@ def _standalone_script_section(campaign: dict, batch_size, n_rounds, init_size, 
     campaign_id = campaign["id"]
     with st.expander("Download a standalone script to run this campaign locally"):
         st.caption(
-            "A Python script you can run on your own IDE, no login required."
+            "A Python script you can run on your own IDE, no login required. "
             "It generates each round's recommendations, saves them to a CSV, and pauses for you to "
-            "fill in your results. "
+            "fill in your own results. "
             "You will need core/baybe_integration.py and its dependencies alongside it."
         )
         config = _build_config(campaign_id, batch_size, n_rounds, init_size, init_type, target_name)
