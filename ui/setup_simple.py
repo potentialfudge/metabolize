@@ -1,14 +1,16 @@
 """
-Simple-mode campaign setup form.
+Campaign setup form, shared between simple and advanced mode.
 
 Shown for a campaign with status='setup'. Collects batch size, number of
 rounds, init settings, target name, and a dynamically-built parameter list,
 then saves it all into campaigns.config, flips status to 'active', and
 routes into the round flow (which handles actually generating the init set).
 
-Encoding is NOT exposed here (that's advanced-mode only) -- categorical
-parameters are always one-hot encoded in simple mode, continuous parameters
-need no encoding. This matches core/baybe_integration.py's _auto_encoding().
+Simple mode (setup_simple): encoding is auto-picked (OHE for categorical,
+none needed for continuous) -- matches core/baybe_integration.py's
+_auto_encoding(). Advanced mode (ui/setup_advanced.py) reuses the same
+_render_setup_form() with advanced=True, which additionally exposes a
+per-categorical-parameter encoding choice and local-run instructions.
 """
 
 import streamlit as st
@@ -19,7 +21,7 @@ from db.queries import update_campaign_config, update_campaign_status
 
 def _default_param() -> dict:
     return {"name": "", "type": "categorical", "values_text": "", "min": 0.0, "max": 1.0,
-            "use_interval": False, "interval": 1.0}
+            "use_interval": False, "interval": 1.0, "encoding": "OHE"}
 
 
 def _params_key(campaign_id: str) -> str:
@@ -55,7 +57,10 @@ def _build_config(campaign_id: str, batch_size, n_rounds, init_size, init_type, 
             if len(values) < 2:
                 st.error(f"Parameter '{name}': enter at least 2 comma-separated values.")
                 return None
-            parameters.append({"name": name, "type": "categorical", "values": values, "encoding": "OHE"})
+            parameters.append({
+                "name": name, "type": "categorical", "values": values,
+                "encoding": p.get("encoding", "OHE"),
+            })
         else:
             if p["min"] >= p["max"]:
                 st.error(f"Parameter '{name}': min must be less than max.")
@@ -78,10 +83,34 @@ def _build_config(campaign_id: str, batch_size, n_rounds, init_size, init_type, 
     }
 
 
-def setup_simple(campaign: dict) -> None:
+def _standalone_script_section(campaign: dict, batch_size, n_rounds, init_size, init_type, target_name) -> None:
+    campaign_id = campaign["id"]
+    with st.expander("Download a standalone script to run this campaign locally"):
+        st.caption(
+            "A Python script you can run on your own IDE, no login required."
+            "It generates each round's recommendations, saves them to a CSV, and pauses for you to "
+            "fill in your results. "
+            "You will need core/baybe_integration.py and its dependencies alongside it."
+        )
+        config = _build_config(campaign_id, batch_size, n_rounds, init_size, init_type, target_name)
+        if config is None:
+            st.info("Fix the issue(s) above to generate the script.")
+        else:
+            from core.generate_runner_script import generate_standalone_script
+            script_text = generate_standalone_script(config, campaign["name"])
+            st.download_button(
+                "⬇ Download runner script (.py)",
+                data=script_text,
+                file_name=f"{campaign['name'].lower().replace(' ', '_')}_runner.py",
+                mime="text/x-python",
+            )
+
+
+def _render_setup_form(campaign: dict, advanced: bool) -> None:
     campaign_id = campaign["id"]
     st.title(campaign["name"])
-    st.caption("Simple mode — set up your campaign below.")
+    st.caption("Advanced mode — full control over encodings." if advanced else
+               "Simple mode — set up your campaign below.")
 
     if _params_key(campaign_id) not in st.session_state:
         st.session_state[_params_key(campaign_id)] = [_default_param()]
@@ -131,7 +160,20 @@ def setup_simple(campaign: dict) -> None:
                     key=f"values_{campaign_id}_{i}",
                     placeholder="e.g. XPhos, SPhos, dppf",
                 )
-                st.caption("Encoded automatically as one-hot (OHE).")
+                if advanced:
+                    p["encoding"] = st.selectbox(
+                        "Encoding",
+                        ["OHE", "SMILES"],
+                        index=0 if p.get("encoding", "OHE") == "OHE" else 1,
+                        key=f"encoding_{campaign_id}_{i}",
+                        help="OHE: one-hot (best for named categories like ligand/solvent names). "
+                             "SMILES: substance/structure-based encoding (best if the values are "
+                             "actual SMILES strings). Note: encoding currently affects BayBE's "
+                             "search-space representation; the GP surrogate used for recommendations "
+                             "always fits on a plain one-hot encoding regardless of this setting.",
+                    )
+                else:
+                    st.caption("Encoded automatically as one-hot (OHE).")
             else:
                 c1, c2, c3 = st.columns(3)
                 with c1:
@@ -156,6 +198,10 @@ def setup_simple(campaign: dict) -> None:
 
     st.divider()
 
+    if advanced:
+        _standalone_script_section(campaign, batch_size, n_rounds, init_size, init_type, target_name)
+        st.divider()
+
     if st.button("Save and start campaign", type="primary"):
         config = _build_config(campaign_id, batch_size, n_rounds, init_size, init_type, target_name)
         if config is not None:
@@ -170,3 +216,7 @@ def setup_simple(campaign: dict) -> None:
         st.session_state.pop(_params_key(campaign_id), None)
         st.session_state.pop("active_campaign_id", None)
         st.rerun()
+
+
+def setup_simple(campaign: dict) -> None:
+    _render_setup_form(campaign, advanced=False)
