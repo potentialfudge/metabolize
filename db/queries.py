@@ -67,11 +67,12 @@ def delete_campaign(client: Client, campaign_id: str) -> None:
 # --------------------------------------------------------------------------- #
 # campaign_rounds
 # --------------------------------------------------------------------------- #
-def create_round(client: Client, campaign_id: str, round_number: int) -> Dict[str, Any]:
+def create_round(client: Client, campaign_id: str, round_number: int, blender_output: Dict[str, Any] = None) -> Dict[str, Any]:
     result = client.table("campaign_rounds").insert({
         "campaign_id": campaign_id,
         "round_number": round_number,
         "ingested": False,
+        "blender_output": blender_output,
     }).execute()
     return result.data[0]
 
@@ -87,14 +88,10 @@ def get_rounds(client: Client, campaign_id: str) -> List[Dict[str, Any]]:
     return result.data
 
 
-def mark_round_ingested(client: Client, campaign_id: str, round_number: int, blender_output: Dict[str, Any]) -> Dict[str, Any]:
+def mark_round_ingested(client: Client, campaign_id: str, round_number: int) -> Dict[str, Any]:
     result = (
         client.table("campaign_rounds")
-        .update({
-            "ingested": True,
-            "ingested_at": "now()",
-            "blender_output": blender_output,
-        })
+        .update({"ingested": True, "ingested_at": "now()"})
         .eq("campaign_id", campaign_id)
         .eq("round_number", round_number)
         .execute()

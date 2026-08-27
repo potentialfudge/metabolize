@@ -304,6 +304,30 @@ def recommend_next_batch(
 
     # ---- 3. sample + score a candidate pool ----
     candidates = _sample_candidate_pool(config, candidate_pool_size, seed=candidate_seed)
+    param_names = [p["name"] for p in params]
+
+    # Dedupe: with a small search space (few categorical options and/or a
+    # coarse continuous interval), a large sampled pool can contain many
+    # repeats of the same point. Duplicate inputs get identical GP scores,
+    # so without deduping, top-k selection can return the same point
+    # multiple times instead of batch_size distinct recommendations.
+    candidates = candidates.drop_duplicates(subset=param_names).reset_index(drop=True)
+
+    # Exclude points already measured in any prior round -- re-recommending
+    # an already-run experiment wastes budget and never adds new information.
+    already_measured = history_df[param_names].astype(str)
+    already_measured_set = set(map(tuple, already_measured.to_numpy()))
+    candidates_str = candidates[param_names].astype(str)
+    is_new = ~candidates_str.apply(tuple, axis=1).isin(already_measured_set)
+    candidates = candidates[is_new].reset_index(drop=True)
+
+    effective_batch_size = min(batch_size, len(candidates))
+    if effective_batch_size < batch_size:
+        # Search space itself (minus already-measured points) is smaller
+        # than the requested batch -- a real constraint, not a bug. Return
+        # everything unique and unmeasured that's left.
+        pass
+
     X_cand = _encode_matrix(candidates, params)
     mu, sigma = _posterior_mu_sigma(model, y_mean, y_std, X_cand)
 
@@ -312,7 +336,7 @@ def recommend_next_batch(
 
     # ---- 4. blend + select top batch_size ----
     blended = blend_scores(ucb, ei, pi, weights)
-    top_idx = np.argsort(blended)[::-1][:batch_size]
+    top_idx = np.argsort(blended)[::-1][:effective_batch_size]
     chosen = candidates.iloc[top_idx].reset_index(drop=True)
     chosen["predicted_mean"] = mu[top_idx]
     chosen["predicted_std"] = sigma[top_idx]
@@ -321,4 +345,6 @@ def recommend_next_batch(
         "blend": blend_out,
         "recommendations": chosen,
         "xi": xi,
+        "requested_batch_size": batch_size,
+        "actual_batch_size": effective_batch_size,
     }

@@ -33,6 +33,41 @@ def _open_campaign(campaign: dict) -> None:
     st.rerun()
 
 
+def _campaign_row(client, c: dict, open_label: str) -> None:
+    """Renders one campaign row with an open/resume/view button and a
+    delete button with two-step confirmation. Shared between the
+    in-progress and completed sections so the delete flow only lives once."""
+    col1, col2, col3, col4 = st.columns([4, 1, 0.7, 0.7], gap="small")
+    with col1:
+        st.write(f"**{c['name']}**")
+        st.caption(f"{_status_badge(c['status'])} · {c['mode'].capitalize()} mode")
+    with col2:
+        st.caption(f"Updated {c['updated_at'][:10]}")
+    with col3:
+        if st.button(open_label, key=f"open_{c['id']}"):
+            _open_campaign(c)
+    with col4:
+        if st.button("Delete", key=f"delete_{c['id']}"):
+            st.session_state["_pending_delete"] = c["id"]
+            st.rerun()
+
+    # Confirmation step: only shows up right under the campaign the user
+    # just clicked Delete on, and requires an explicit second click before
+    # anything is actually removed.
+    if st.session_state.get("_pending_delete") == c["id"]:
+        st.warning(f"Delete **{c['name']}**? This cannot be undone — all rounds and data will be lost.")
+        confirm_col, cancel_col = st.columns([1, 1])
+        with confirm_col:
+            if st.button("Yes, delete permanently", key=f"confirm_delete_{c['id']}", type="primary"):
+                delete_campaign(client, c["id"])
+                st.session_state.pop("_pending_delete", None)
+                st.rerun()
+        with cancel_col:
+            if st.button("Cancel", key=f"cancel_delete_{c['id']}"):
+                st.session_state.pop("_pending_delete", None)
+                st.rerun()
+
+
 def campaign_picker() -> None:
     st.title("Your campaigns")
 
@@ -66,35 +101,7 @@ def campaign_picker() -> None:
         st.caption("No campaigns in progress.")
     else:
         for c in in_progress:
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-            with col1:
-                st.write(f"**{c['name']}**")
-                st.caption(f"{_status_badge(c['status'])} · {c['mode'].capitalize()} mode")
-            with col2:
-                st.caption(f"Updated {c['updated_at'][:10]}")
-            with col3:
-                if st.button("Resume", key=f"resume_{c['id']}"):
-                    _open_campaign(c)
-            with col4:
-                if st.button("Delete", key=f"delete_{c['id']}"):
-                    st.session_state["_pending_delete"] = c["id"]
-                    st.rerun()
-
-            # Confirmation step: only shows up right under the campaign the
-            # user just clicked Delete on, and requires an explicit second
-            # click before anything is actually removed.
-            if st.session_state.get("_pending_delete") == c["id"]:
-                st.warning(f"Delete **{c['name']}**? This cannot be undone — all rounds and data will be lost.")
-                confirm_col, cancel_col = st.columns([1, 1])
-                with confirm_col:
-                    if st.button("Yes, delete permanently", key=f"confirm_delete_{c['id']}", type="primary"):
-                        delete_campaign(client, c["id"])
-                        st.session_state.pop("_pending_delete", None)
-                        st.rerun()
-                with cancel_col:
-                    if st.button("Cancel", key=f"cancel_delete_{c['id']}"):
-                        st.session_state.pop("_pending_delete", None)
-                        st.rerun()
+            _campaign_row(client, c, open_label="Resume")
 
     st.divider()
 
@@ -104,12 +111,4 @@ def campaign_picker() -> None:
         st.caption("No completed campaigns yet.")
     else:
         for c in completed:
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.write(f"**{c['name']}**")
-                st.caption(f"{_status_badge(c['status'])} · {c['mode'].capitalize()} mode")
-            with col2:
-                st.caption(f"Updated {c['updated_at'][:10]}")
-            with col3:
-                if st.button("View", key=f"view_{c['id']}"):
-                    _open_campaign(c)
+            _campaign_row(client, c, open_label="View")

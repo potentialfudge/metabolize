@@ -20,6 +20,8 @@ from db.client import get_client
 from db.queries import get_campaign
 from ui.campaign_picker import campaign_picker
 from ui.setup_simple import setup_simple
+from ui.round_flow import round_flow
+from ui.stats import stats_page
 
 if "active_campaign_id" not in st.session_state:
     campaign_picker()
@@ -29,6 +31,10 @@ else:
     view = st.session_state.get("active_campaign_view")
     if view == "setup":
         setup_simple(campaign)
+    elif view == "round_flow":
+        round_flow(campaign)
+    elif view == "stats":
+        stats_page(campaign)
     else:
         st.write(f"View '{view}' not built yet.")
         if st.button("Back to campaigns"):
