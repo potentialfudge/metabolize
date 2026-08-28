@@ -37,7 +37,7 @@ def _campaign_row(client, c: dict, open_label: str) -> None:
     """Renders one campaign row with an open/resume/view button and a
     delete button with two-step confirmation. Shared between the
     in-progress and completed sections so the delete flow only lives once."""
-    col1, col2, col3, col4 = st.columns([4, 1, 0.7, 0.7], gap="small")
+    col1, col2, col3, col4 = st.columns([4.5, 1.5, 1, 0.9], gap="small")
     with col1:
         st.write(f"**{c['name']}**")
         st.caption(f"{_status_badge(c['status'])} · {c['mode'].capitalize()} mode")

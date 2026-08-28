@@ -39,9 +39,17 @@ if not st.user.is_logged_in:
         st.button("Log in", on_click=st.login, args=("auth0",), width="stretch", type="primary")
     st.stop()
 
-st.sidebar.write(f"Logged in as **{st.user.email}**")
-if st.sidebar.button("Log out"):
-    st.logout()
+top_col1, top_col2 = st.columns([3, 2])
+with top_col2:
+    st.markdown(
+        f"<p style='text-align: right; margin-bottom: 0; white-space: nowrap;'>"
+        f"Logged in as <b>{st.user.email}</b></p>",
+        unsafe_allow_html=True,
+    )
+    spacer, button_col = st.columns([2, 1])
+    with button_col:
+        if st.button("Log out", key="logout_btn", width="stretch", type="secondary"):
+            st.logout()
 
 # ---- routing ----
 try:
