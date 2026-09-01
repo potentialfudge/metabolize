@@ -1,0 +1,22 @@
+name: Keep Streamlit app awake
+
+# Pings the deployed app on a schedule so Streamlit Community Cloud doesn't
+# put it to sleep from inactivity. Runs independently of any code changes.
+# This is purely a scheduled "visit the URL" job, not a deployment step.
+
+on:
+  schedule:
+    # Every 6 hours -- comfortable margin under Streamlit's ~12 hour idle
+    # threshold, without pinging far more often than necessary.
+    - cron: "0 */6 * * *"
+  workflow_dispatch:  # lets you trigger it manually from the Actions tab too
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the app
+        run: |
+          curl -sS -o /dev/null -w "HTTP status: %{http_code}\n" \
+            https://metabolize.streamlit.app \
+            --max-time 30 --retry 2
