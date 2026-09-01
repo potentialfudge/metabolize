@@ -39,8 +39,12 @@ if not st.user.is_logged_in:
         st.button("Log in", on_click=st.login, args=("auth0",), width="stretch", type="primary")
     st.stop()
 
-top_col1, top_col2 = st.columns([3, 2])
-with top_col2:
+logo_col, spacer_col, user_col = st.columns([1, 2, 2])
+
+with logo_col:
+    st.image("assets/logo.png", width=67)
+
+with user_col:
     st.markdown(
         f"<p style='text-align: right; margin-bottom: 0; white-space: nowrap;'>"
         f"Logged in as <b>{st.user.email}</b></p>",
