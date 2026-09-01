@@ -1,10 +1,7 @@
 """
 Generates a standalone, config-specific Python runner script for advanced-
-mode users who want to run their campaign entirely locally -- no Streamlit,
-no Supabase, no Auth0, no login. Mirrors the interactive-pause style of the
-benchmarking pipeline's runner scripts (e.g. schsf_meta_aug_runner.py):
-generate a batch, save it to CSV, pause for the user to fill in real
-experimental results, read it back, repeat.
+mode users who want to run their campaign entirely locally with no Streamlit
+or login.
 
 The generated script only depends on core/baybe_integration.py (and its
 own dependencies: baybe, torch, gpytorch, botorch, scipy, pandas, numpy) --
@@ -41,8 +38,11 @@ Each round, this script:
      history, and generates the next round's recommendations.
   4. Repeats until you've completed the configured number of rounds, then
      asks whether to continue with more rounds or stop.
+  5. After every round, saves charts and tables (learning curve, progress,
+     distribution, blend weights, per-parameter analysis, top results) to
+     STATS_DIR. This is kept current as you go, not just at the very end.
 
-All results accumulate in all_results.csv in this script's directory.
+All results accumulate in RESULTS_CSV in this script's directory.
 """
 
 import sys
@@ -54,6 +54,7 @@ warnings.filterwarnings("ignore")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
+import matplotlib.pyplot as plt
 from core.baybe_integration import generate_sobol_init, recommend_next_batch
 
 CONFIG = {config_literal}
@@ -212,6 +213,7 @@ def main():
         history_df = _append_history(history_df, filled, round_number=0)
         print(f"Round 0 ingested. Best {{CONFIG['target_name']}} so far: "
               f"{{history_df[CONFIG['target_name']].max():.4g}}")
+        _save_stats(history_df)
 
     # ---- rounds 1..n_rounds (and beyond, if the user chooses to continue) ----
     round_number = int(history_df["batch"].max()) + 1
@@ -221,9 +223,9 @@ def main():
         if round_number > n_rounds:
             again = input(
                 f"\\nYou've completed all {{n_rounds}} planned rounds. "
-                f"Run another round? [Y/N]: "
+                f"Run another round? [y/N]: "
             )
-            if again.strip().lower() != "Y":
+            if again.strip().lower() != "y":
                 break
 
         print(f"\\nGenerating round {{round_number}} recommendations...")
@@ -236,6 +238,7 @@ def main():
         if result["actual_batch_size"] < result["requested_batch_size"]:
             print(f"  Only {{result['actual_batch_size']}} new unique combinations remain "
                   f"(requested {{result['requested_batch_size']}}).")
+        _log_blend_decision(round_number, result["blend"])
 
         recs = result["recommendations"][_param_columns()].copy()
         recs[CONFIG["target_name"]] = ""
@@ -246,6 +249,7 @@ def main():
         history_df = _append_history(history_df, filled, round_number=round_number)
         print(f"Round {{round_number}} ingested. Best {{CONFIG['target_name']}} so far: "
               f"{{history_df[CONFIG['target_name']].max():.4g}}")
+        _save_stats(history_df)
 
         round_number += 1
 
