@@ -26,7 +26,7 @@ REQUIREMENTS:
         pip install baybe torch gpytorch botorch scipy pandas numpy matplotlib
 
 USAGE:
-    Assign RESULTS_CSV, BLEND_LOG_CSV and STATS_DIR paths, and SOBOL_SEED as needed.
+    Assign RESULTS_CSV, BLEND_LOG_CSV, RUN_SHEETS_DIR and STATS_DIR paths, and SOBOL_SEED as needed.
     python {campaign_name.lower().replace(" ", "_")}_runner.py
 
 Each round, this script:
@@ -40,7 +40,7 @@ Each round, this script:
      asks whether to continue with more rounds or stop.
   5. After every round, saves charts and tables (learning curve, progress,
      distribution, blend weights, per-parameter analysis, top results) to
-     STATS_DIR. This is kept current as you go, not just at the very end.
+     STATS_DIR -- kept current as you go, not just at the very end.
 
 All results accumulate in RESULTS_CSV in this script's directory.
 """
@@ -61,10 +61,11 @@ CONFIG = {config_literal}
 
 CAMPAIGN_NAME = {campaign_name!r}
 
-# Edit these paths and values as needed. The script will create the stats folder if it doesn't exist.
+# Edit these paths and values as needed. The script will create the stats and run_sheets folders if they don't exist.
 RESULTS_CSV = "/your/path/here/all_results.csv"
 BLEND_LOG_CSV = "/your/path/here/blend_log.csv"
 STATS_DIR = "/your/path/here/stats"
+RUN_SHEETS_DIR = "/your/path/here/run_sheets"
 SOBOL_SEED = 67
 
 
@@ -207,7 +208,8 @@ def main():
         print(f"\\nGenerating initial batch ({{CONFIG['init_size']}} experiments, Sobol seed={{SOBOL_SEED}})...")
         init_df = generate_sobol_init(CONFIG, seed=SOBOL_SEED)
         init_df[CONFIG["target_name"]] = ""
-        run_sheet_path = "round0_run_sheet.csv"
+        os.makedirs(RUN_SHEETS_DIR, exist_ok=True)
+        run_sheet_path = os.path.join(RUN_SHEETS_DIR, "round0_run_sheet.csv")
         init_df.to_csv(run_sheet_path, index=False)
         filled = _pause_for_results(run_sheet_path)
         history_df = _append_history(history_df, filled, round_number=0)
@@ -242,7 +244,8 @@ def main():
 
         recs = result["recommendations"][_param_columns()].copy()
         recs[CONFIG["target_name"]] = ""
-        run_sheet_path = f"round{{round_number}}_run_sheet.csv"
+        os.makedirs(RUN_SHEETS_DIR, exist_ok=True)
+        run_sheet_path = os.path.join(RUN_SHEETS_DIR, f"round{{round_number}}_run_sheet.csv")
         recs.to_csv(run_sheet_path, index=False)
 
         filled = _pause_for_results(run_sheet_path)
