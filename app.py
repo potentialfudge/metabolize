@@ -11,6 +11,34 @@ from ui.stats import stats_page
 
 st.set_page_config(page_title="metabolize", page_icon="🧪")
 
+st.markdown(
+    """
+    <style>
+    h1, h2, h3 { color: #0C2245; }
+    section[data-testid="stSidebar"] {
+        background-color: #0C2245;
+    }
+    section[data-testid="stSidebar"] * {
+        color: #FFFFFF !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <style>
+    section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+    section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] * {
+        color: #FFFFFF !important;
+        opacity: 1 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 if not st.user.is_logged_in:
     st.markdown(
     """
@@ -39,7 +67,7 @@ if not st.user.is_logged_in:
         st.button("Log in", on_click=st.login, args=("auth0",), width="stretch", type="primary")
     st.stop()
 
-logo_col, spacer_col, user_col = st.columns([1, 2, 2])
+logo_col, spacer_col, user_col = st.columns([1, 1.5, 2])
 
 with logo_col:
     st.image("assets/logo.png", width=67)

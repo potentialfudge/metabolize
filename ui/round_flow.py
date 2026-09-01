@@ -26,7 +26,7 @@ def _param_columns(config: dict) -> list[str]:
 
 def _exit_button() -> None:
     st.divider()
-    if st.button("← Save and exit to campaigns", width="stretch"):
+    if st.button("← Save and exit to campaigns", width="stretch", type="secondary"):
         st.session_state.pop("active_campaign_id", None)
         st.rerun()
 

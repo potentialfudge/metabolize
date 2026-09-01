@@ -37,17 +37,17 @@ def _campaign_row(client, c: dict, open_label: str) -> None:
     """Renders one campaign row with an open/resume/view button and a
     delete button with two-step confirmation. Shared between the
     in-progress and completed sections so the delete flow only lives once."""
-    col1, col2, col3, col4 = st.columns([4.5, 1.5, 1, 0.9], gap="small")
+    col1, col2, col3, col4 = st.columns([4.5, 1.9, 1.1, 1], gap="small")
     with col1:
         st.write(f"**{c['name']}**")
         st.caption(f"{_status_badge(c['status'])} · {c['mode'].capitalize()} mode")
     with col2:
         st.caption(f"Updated {c['updated_at'][:10]}")
     with col3:
-        if st.button(open_label, key=f"open_{c['id']}"):
+        if st.button(open_label, key=f"open_{c['id']}", type="primary"):
             _open_campaign(c)
     with col4:
-        if st.button("Delete", key=f"delete_{c['id']}"):
+        if st.button("Delete", key=f"delete_{c['id']}", type="secondary"):
             st.session_state["_pending_delete"] = c["id"]
             st.rerun()
 
@@ -69,6 +69,26 @@ def _campaign_row(client, c: dict, open_label: str) -> None:
 
 
 def campaign_picker() -> None:
+    st.markdown(
+    """
+    <style>
+    div[class*="st-key-delete_"] button {
+        background-color: #D97A14 !important;
+        color: white !important;
+        border: none !important;
+    }
+    div[class*="st-key-delete_"] button:hover {
+        background-color: #9C570E !important;
+    }
+    div[class*="st-key-confirm_delete_"] button {
+        background-color: #D97A14 !important;
+        color: white !important;
+        border: none !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+    )
     st.title("Your campaigns")
 
     client = get_client()
@@ -85,7 +105,7 @@ def campaign_picker() -> None:
             placeholder="e.g. Sulfonamide coupling optimization",
         )
         mode = st.radio("Mode", ["simple", "advanced"], horizontal=True, format_func=str.capitalize)
-        submitted = st.form_submit_button("Create campaign")
+        submitted = st.form_submit_button("Create campaign", type="primary")
     if submitted:
         if not name.strip():
             st.error("Please give your campaign a name.")
