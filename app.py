@@ -9,7 +9,7 @@ from ui.setup_advanced import setup_advanced
 from ui.round_flow import round_flow
 from ui.stats import stats_page
 
-st.set_page_config(page_title="metabolize", page_icon="🧪")
+st.set_page_config(page_title="metabolize", page_icon="🍅")
 
 st.markdown(
     """
@@ -34,6 +34,15 @@ st.markdown(
         color: #FFFFFF !important;
         opacity: 1 !important;
     }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <style>
+    footer { visibility: hidden; }
     </style>
     """,
     unsafe_allow_html=True,
