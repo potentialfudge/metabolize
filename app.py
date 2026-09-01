@@ -43,6 +43,7 @@ st.markdown(
     """
     <style>
     footer { visibility: hidden; }
+    a:has([data-testid="appCreatorAvatar"]) { display: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
